@@ -1,0 +1,19 @@
+[
+  {
+    "label": "kiwil",
+    "host": "play.flestymc.com",
+    "port": 25565,
+    "username": "Thecrazys15",
+    "auth": "offline",
+    "version": "1.21.4",
+    "loginPassword": "",
+    "autoReconnect": true,
+    "reconnectDelay": 10,
+    "antiAfk": false,
+    "afkInterval": 30,
+    "scheduled": [],
+    "keywords": [],
+    "notifyDamage": true,
+    "id": "acc_mvupjyfh"
+  }
+]

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#16181f" />
+  <title>ChatCraft Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- ================= SIDEBAR: AKUN ================= -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="logo-block"></span>
+        <div><b><span class="g">Chat</span>Craft</b><small>Web Client</small></div>
+      </div>
+      <button class="btn primary block" id="btnAdd">＋ Tambah Akun</button>
+      <div class="acc-list" id="accList"></div>
+      <div class="side-foot">Java Edition · Vanilla, Spigot, Paper, Forge*</div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
+
+    <!-- ================= MAIN: CHAT ================= -->
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="btnMenu">☰</button>
+        <div class="title">
+          <div class="t1" id="hdrName">Belum ada akun</div>
+          <div class="t2"><span class="dot" id="hdrDot"></span><span id="hdrStatus">Tambah akun untuk mulai</span></div>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn" id="btnEdit" title="Pengaturan akun">⚙</button>
+          <button class="btn" id="btnConnect">Hubungkan</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="chat-col">
+          <div class="chat-log mc" id="chatLog"></div>
+          <form class="chat-input" id="chatForm" autocomplete="off">
+            <button type="button" class="icon-btn" id="btnQuick" title="Perintah cepat">/</button>
+            <input id="chatText" placeholder="Ketik pesan atau /perintah..." maxlength="256" />
+            <button class="btn primary" type="submit">Kirim</button>
+          </form>
+          <div class="quick" id="quickBar" hidden>
+            <button data-cmd="/list">/list</button>
+            <button data-cmd="/spawn">/spawn</button>
+            <button data-cmd="/home">/home</button>
+            <button data-cmd="/tpa ">/tpa</button>
+            <button data-cmd="/msg ">/msg</button>
+            <button data-cmd="/bal">/bal</button>
+            <button data-cmd="/login ">/login</button>
+            <button data-cmd="/register ">/register</button>
+          </div>
+        </section>
+
+        <!-- ================= PANEL KANAN ================= -->
+        <section class="panel">
+          <div class="tabs" id="panelTabs">
+            <button class="tab active" data-tab="status">❤ Status</button>
+            <button class="tab" data-tab="players">👥 Pemain</button>
+            <button class="tab" data-tab="inv">🎒 Inventaris</button>
+            <button class="tab" data-tab="map">🗺 Peta</button>
+            <button class="tab" data-tab="move">🎮 Gerak</button>
+          </div>
+
+          <div class="pane active" data-pane="status">
+            <div class="bars-row">
+              <div class="hearts" id="hearts"></div>
+              <div class="foods" id="foods"></div>
+            </div>
+            <div class="stats" id="stats"><div class="empty">Tidak terhubung.</div></div>
+          </div>
+
+          <div class="pane" data-pane="players">
+            <div class="players" id="players"><div class="empty">Tidak terhubung.</div></div>
+          </div>
+
+          <div class="pane" data-pane="inv">
+            <div class="inv-wrap">
+              <div class="inv-grid" id="invMain"></div>
+              <div class="inv-grid hotbar" id="invHotbar"></div>
+              <p class="note">Klik slot hotbar untuk memegang item tersebut.</p>
+            </div>
+          </div>
+
+          <div class="pane" data-pane="map">
+            <div class="map-wrap">
+              <canvas id="mapCanvas" width="390" height="390"></canvas>
+              <div class="legend"><span><i style="background:#fff"></i>Kamu</span><span><i style="background:#55ffff"></i>Pemain</span><span><i style="background:#ff5555"></i>Mob</span><span><i style="background:#ffff55"></i>Item/lainnya</span></div>
+            </div>
+          </div>
+
+          <div class="pane" data-pane="move">
+            <div class="dpad">
+              <button data-ctl="look-left" class="sm">⟲</button>
+              <button data-ctl="forward">▲</button>
+              <button data-ctl="look-right" class="sm">⟳</button>
+              <button data-ctl="left">◀</button>
+              <button data-ctl="jump">⤒</button>
+              <button data-ctl="right">▶</button>
+              <button data-ctl="sneak" class="sm">Sneak</button>
+              <button data-ctl="back">▼</button>
+              <button data-ctl="sprint" class="sm">Sprint</button>
+            </div>
+            <p class="note center">Tahan tombol untuk bergerak. Di komputer bisa pakai W A S D, Spasi, Q/E (putar) saat kolom chat tidak aktif.</p>
+            <button class="btn block" id="btnRespawn">↻ Respawn</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ================= MODAL AKUN ================= -->
+  <div class="modal" id="accModal" hidden>
+    <form class="modal-card" id="accForm">
+      <div class="modal-head"><h3 id="accModalTitle">Tambah Akun</h3><button type="button" class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body">
+        <fieldset>
+          <legend>Server</legend>
+          <label>Nama tampilan <input name="label" placeholder="contoh: Server Survival" /></label>
+          <div class="row">
+            <label class="grow">Alamat server <input name="host" placeholder="play.contoh.net" required /></label>
+            <label class="w90">Port <input name="port" type="number" value="25565" /></label>
+          </div>
+          <label>Versi <input name="version" list="versions" placeholder="Kosongkan = otomatis" /></label>
+          <datalist id="versions">
+            <option value="1.21.4"><option value="1.21.1"><option value="1.20.4"><option value="1.20.1"><option value="1.19.4"><option value="1.18.2"><option value="1.16.5"><option value="1.12.2"><option value="1.8.9">
+          </datalist>
+        </fieldset>
+
+        <fieldset>
+          <legend>Akun</legend>
+          <label>Tipe akun
+            <select name="auth">
+              <option value="offline">Non-premium / Offline (cracked)</option>
+              <option value="microsoft">Premium (Microsoft)</option>
+            </select>
+          </label>
+          <label><span id="userLbl">Username</span> <input name="username" placeholder="Steve" required /></label>
+          <label class="offline-only">Password /login otomatis (opsional) <input name="loginPassword" type="password" placeholder="untuk server AuthMe / non-premium" /></label>
+          <p class="note ms-only">Saat pertama terhubung, akan muncul kode untuk login di microsoft.com/link. Sesi disimpan, jadi cukup sekali.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>AFK & Koneksi</legend>
+          <div class="row">
+            <label class="chk grow"><input type="checkbox" name="autoReconnect" /> Sambung ulang otomatis</label>
+            <label class="w90">Delay (dtk) <input name="reconnectDelay" type="number" min="3" /></label>
+          </div>
+          <div class="row">
+            <label class="chk grow"><input type="checkbox" name="antiAfk" /> Anti-AFK (gerak berkala)</label>
+            <label class="w90">Tiap (dtk) <input name="afkInterval" type="number" min="5" /></label>
+          </div>
+          <label class="chk"><input type="checkbox" name="notifyDamage" /> Notifikasi saat karakter diserang / mati</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Perintah Terjadwal</legend>
+          <div id="schedList" class="sched-list"></div>
+          <button type="button" class="btn small" id="btnAddSched">＋ Tambah perintah</button>
+        </fieldset>
+
+        <fieldset>
+          <legend>Notifikasi Kata Kunci</legend>
+          <label>Kata kunci (pisahkan dengan koma) <input name="keywords" placeholder="nama_kamu, admin, event" /></label>
+        </fieldset>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn danger" id="btnDelete">Hapus</button>
+        <span class="grow"></span>
+        <button type="button" class="btn" data-close>Batal</button>
+        <button type="submit" class="btn primary">Simpan</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ================= MODAL MICROSOFT ================= -->
+  <div class="modal" id="msaModal" hidden>
+    <div class="modal-card small">
+      <div class="modal-head"><h3>Login Microsoft</h3><button type="button" class="icon-btn" data-close>✕</button></div>
+      <div class="modal-body center">
+        <p>Buka link berikut dan masukkan kode:</p>
+        <a id="msaLink" target="_blank" rel="noopener" href="#">microsoft.com/link</a>
+        <div class="msa-code" id="msaCode">—</div>
+        <button class="btn" id="btnCopyCode">📋 Salin kode</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= LOGIN WEB ================= -->
+  <div class="modal" id="authModal" hidden>
+    <form class="modal-card small" id="authForm">
+      <div class="modal-head"><h3>Masukkan password</h3></div>
+      <div class="modal-body"><input type="password" id="authPass" placeholder="ACCESS_PASSWORD" /></div>
+      <div class="modal-foot"><span class="grow"></span><button class="btn primary">Masuk</button></div>
+    </form>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
