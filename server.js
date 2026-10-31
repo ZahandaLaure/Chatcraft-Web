@@ -275,6 +275,68 @@ class Session {
       .map((e) => ({ type: e.type, name: e.username || e.name, dx: e.position.x - b.entity.position.x, dz: e.position.z - b.entity.position.z }));
     return { radius, cells, entities, yaw: b.entity.yaw };
   }
+
+  world3d(radius = 12, vRadius = 8) {
+    const b = this.bot;
+    if (!b || !b.entity) return null;
+    const pos = b.entity.position;
+    const p = pos.floored();
+    const palette = [];
+    const palMap = new Map();
+    const blocks = [];
+    const v = new Vec3(0, 0, 0);
+    const n = new Vec3(0, 0, 0);
+    const TRANSPARENT = new Set([...AIR, 'water', 'lava', 'glass', 'glass_pane', 'oak_leaves', 'spruce_leaves', 'birch_leaves', 'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves', 'cherry_leaves', 'mangrove_leaves', 'azalea_leaves', 'short_grass', 'tall_grass', 'fern', 'torch', 'wall_torch', 'soul_torch', 'lantern', 'chest', 'ender_chest', 'trapped_chest', 'oak_fence', 'iron_bars', 'ladder', 'vine']);
+    const isTrans = (blk) => !blk || AIR.has(blk.name) || TRANSPARENT.has(blk.name) || blk.name.includes('glass') || blk.name.includes('leaves') || blk.name.includes('slab') || blk.name.includes('stairs') || blk.name.includes('fence') || blk.name.includes('carpet') || blk.name.includes('head') || blk.name.includes('skull');
+
+    for (let dy = -vRadius; dy <= vRadius + 2; dy++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const blk = b.blockAt(v.set(p.x + dx, p.y + dy, p.z + dz), false);
+          if (!blk || AIR.has(blk.name)) continue;
+          // Hanya kirim blok yang punya minimal 1 sisi terbuka/transparan agar ringan
+          const exposed =
+            isTrans(b.blockAt(n.set(v.x + 1, v.y, v.z), false)) ||
+            isTrans(b.blockAt(n.set(v.x - 1, v.y, v.z), false)) ||
+            isTrans(b.blockAt(n.set(v.x, v.y + 1, v.z), false)) ||
+            isTrans(b.blockAt(n.set(v.x, v.y - 1, v.z), false)) ||
+            isTrans(b.blockAt(n.set(v.x, v.y, v.z + 1), false)) ||
+            isTrans(b.blockAt(n.set(v.x, v.y, v.z - 1), false));
+          if (!exposed) continue;
+
+          let idx = palMap.get(blk.name);
+          if (idx === undefined) {
+            idx = palette.length;
+            palette.push([blk.name, blockColor(blk.name)]);
+            palMap.set(blk.name, idx);
+          }
+          blocks.push([dx, dy, dz, idx]);
+        }
+      }
+    }
+
+    const entities = Object.values(b.entities)
+      .filter((e) => e !== b.entity && e.position && Math.abs(e.position.x - pos.x) <= radius + 2 && Math.abs(e.position.z - pos.z) <= radius + 2 && Math.abs(e.position.y - pos.y) <= vRadius + 4)
+      .map((e) => ({
+        id: e.id,
+        type: e.type,
+        name: e.username || e.displayName || e.name || 'Entity',
+        dx: +(e.position.x - p.x).toFixed(2),
+        dy: +(e.position.y - p.y).toFixed(2),
+        dz: +(e.position.z - p.z).toFixed(2),
+        yaw: +(e.yaw || 0).toFixed(2),
+      }));
+
+    return {
+      offset: { x: +(pos.x - p.x).toFixed(2), y: +(pos.y - p.y).toFixed(2), z: +(pos.z - p.z).toFixed(2) },
+      yaw: b.entity.yaw,
+      pitch: b.entity.pitch,
+      time: b.time?.timeOfDay ?? 6000,
+      palette,
+      blocks,
+      entities,
+    };
+  }
 }
 
 // ---------------------------------------------------------------- app
@@ -327,6 +389,7 @@ io.on('connection', (socket) => {
   socket.on('bot:history', (id, cb) => cb && cb(sessions.get(id)?.log || []));
   socket.on('bot:state', (id, cb) => cb && cb(sessions.get(id)?.snapshot() || null));
   socket.on('bot:map', (id, cb) => { try { cb && cb(sessions.get(id)?.map() || null); } catch { cb && cb(null); } });
+  socket.on('bot:world3d', (id, cb) => { try { cb && cb(sessions.get(id)?.world3d() || null); } catch { cb && cb(null); } });
 
   socket.on('bot:chat', (id, text) => {
     const s = sessions.get(id);
@@ -341,7 +404,28 @@ io.on('connection', (socket) => {
   });
   socket.on('bot:look', (id, dYaw) => {
     const b = sessions.get(id)?.bot;
-    if (b?.entity) b.look(b.entity.yaw + Number(dYaw || 0), 0, true);
+    if (b?.entity) b.look(b.entity.yaw + Number(dYaw || 0), b.entity.pitch || 0, true);
+  });
+  socket.on('bot:look2d', (id, dYaw, dPitch) => {
+    const b = sessions.get(id)?.bot;
+    if (!b?.entity) return;
+    const pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, (b.entity.pitch || 0) + Number(dPitch || 0)));
+    b.look(b.entity.yaw + Number(dYaw || 0), pitch, true);
+  });
+  socket.on('bot:action', (id, act) => {
+    const b = sessions.get(id)?.bot;
+    if (!b?.entity) return;
+    try {
+      if (act === 'swing') {
+        const ent = b.nearestEntity((e) => (e.type === 'mob' || e.type === 'player' || e.type === 'hostile') && b.entity.position.distanceTo(e.position) < 4);
+        if (ent) b.attack(ent);
+        else b.swingArm();
+      } else if (act === 'use') {
+        const blk = b.blockAtCursor?.(4);
+        if (blk) b.activateBlock(blk).catch(() => b.activateItem());
+        else b.activateItem();
+      }
+    } catch { /* ignore */ }
   });
   socket.on('bot:hotbar', (id, slot) => {
     const b = sessions.get(id)?.bot;
@@ -355,7 +439,12 @@ server.listen(PORT, HOST, () => {
   if (HOST === '0.0.0.0') console.log('  Bisa dibuka dari HP di jaringan Wi-Fi yang sama (pakai IP komputer ini).\n');
 });
 
-// Keep-alive otomatis untuk hosting gratis (Render / Koyeb) agar tidak sleep saat AFK
+// Keep-alive otomatis untuk Codespaces (output terminal berkala) & hosting gratis
+setInterval(() => {
+  const activeCount = [...sessions.values()].filter((s) => s.status !== 'offline').length;
+  console.log(`[KeepAlive ${new Date().toLocaleTimeString()}] Server aktif (${activeCount} akun berjalan)`);
+}, 5 * 60 * 1000);
+
 const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || '';
 if (EXTERNAL_URL) {
   setInterval(() => {

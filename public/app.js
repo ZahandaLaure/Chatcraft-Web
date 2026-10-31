@@ -307,6 +307,285 @@
     socket.emit('bot:map', current, (m) => { mapBusy = false; drawMap(m); });
   }, 1500);
 
+  // ------------------------------------------------------------ 3D World Viewer (Three.js)
+  const worldWrap = $('#worldWrap'), worldCanvas = $('#worldCanvas'), worldInfo = $('#worldInfo');
+  let camMode = 'pov'; // 'pov' | 'orbit'
+  let orbitYaw = 0.6, orbitPitch = 0.45, orbitDist = 10;
+  let localYaw = 0, localPitch = 0, lastLookSync = 0;
+  let wScene, wCamera, wRenderer, wWorldGroup, wEntityGroup, wSelfMesh;
+  const matCache = new Map();
+  let boxGeo;
+
+  function makePixelTex(baseHex, kind = 'normal') {
+    const c = document.createElement('canvas');
+    c.width = 16; c.height = 16;
+    const g = c.getContext('2d');
+    const n = parseInt((baseHex || '#888888').slice(1), 16);
+    const r = (n >> 16) & 255, gr = (n >> 8) & 255, b = n & 255;
+    const clamp = (v) => Math.max(0, Math.min(255, v | 0));
+    let seed = (r * 73 + gr * 151 + b * 29) | 1;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed & 0xffff) / 0xffff; };
+
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        let d = (rnd() - 0.5) * 22;
+        if (kind === 'planks' && (y % 4 === 0 || (x + (y >> 2) * 7) % 16 === 0)) d -= 24;
+        if (kind === 'brick' && (y % 4 === 0 || ((x + (y >> 2) * 4) % 8 === 0))) d -= 28;
+        if (kind === 'log' && (x % 3 === 0)) d -= 18;
+        const border = (x === 0 || y === 0 || x === 15 || y === 15) ? -10 : 0;
+        if (kind === 'grassSide' && y < 4 + ((x * 7) % 3)) {
+          g.fillStyle = `rgb(${clamp(110 + d)},${clamp(174 + d)},${clamp(79 + d)})`;
+        } else {
+          g.fillStyle = `rgb(${clamp(r + d + border)},${clamp(gr + d + border)},${clamp(b + d + border)})`;
+        }
+        g.fillRect(x, y, 1, 1);
+      }
+    }
+    if (kind === 'glass') {
+      g.clearRect(1, 1, 14, 14);
+      g.fillStyle = 'rgba(200,235,255,0.22)';
+      g.fillRect(1, 1, 14, 14);
+      g.fillStyle = 'rgba(255,255,255,0.65)';
+      g.fillRect(3, 3, 2, 1); g.fillRect(3, 4, 1, 2);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    return tex;
+  }
+
+  function getBlockMaterial(name, hex) {
+    if (matCache.has(name)) return matCache.get(name);
+    let mat;
+    if (name === 'grass_block') {
+      const top = new THREE.MeshLambertMaterial({ map: makePixelTex('#6fae4f', 'normal') });
+      const bot = new THREE.MeshLambertMaterial({ map: makePixelTex('#866043', 'normal') });
+      const side = new THREE.MeshLambertMaterial({ map: makePixelTex('#866043', 'grassSide') });
+      mat = [side, side, top, bot, side, side];
+    } else if (name.includes('glass')) {
+      mat = new THREE.MeshLambertMaterial({ map: makePixelTex(hex, 'glass'), transparent: true, opacity: 0.55 });
+    } else if (name.includes('water')) {
+      mat = new THREE.MeshLambertMaterial({ color: 0x3f6fe0, transparent: true, opacity: 0.68 });
+    } else if (name.includes('lava')) {
+      mat = new THREE.MeshBasicMaterial({ map: makePixelTex('#ff661a', 'normal') });
+    } else {
+      const kind = name.includes('planks') ? 'planks' : (name.includes('brick') || name.includes('cobble')) ? 'brick' : name.includes('log') ? 'log' : 'normal';
+      mat = new THREE.MeshLambertMaterial({ map: makePixelTex(hex, kind) });
+    }
+    matCache.set(name, mat);
+    return mat;
+  }
+
+  function makeNameSprite(text, color = '#ffffff') {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    g.font = 'bold 28px monospace';
+    const w = Math.min(248, g.measureText(text).width + 24);
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect((256 - w) / 2, 12, w, 38);
+    g.fillStyle = color;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text.slice(0, 18), 128, 31);
+    const tex = new THREE.CanvasTexture(c);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+    sp.scale.set(2.4, 0.6, 1);
+    sp.renderOrder = 10;
+    return sp;
+  }
+
+  function makeCharMesh(colorHex = 0x55ffff, label = '') {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.35, 0.35), new THREE.MeshLambertMaterial({ color: colorHex }));
+    body.position.y = 0.675;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshLambertMaterial({ color: 0xffd2a6 }));
+    head.position.y = 1.6;
+    grp.add(body, head);
+    if (label) {
+      const sp = makeNameSprite(label, colorHex === 0x55ffff ? '#55ffff' : '#ff9999');
+      sp.position.y = 2.25;
+      grp.add(sp);
+    }
+    return grp;
+  }
+
+  function initWorld3D() {
+    if (wRenderer || typeof THREE === 'undefined') return;
+    wScene = new THREE.Scene();
+    wScene.background = new THREE.Color(0x78a7ff);
+    wScene.fog = new THREE.FogExp2(0x78a7ff, 0.032);
+
+    wCamera = new THREE.PerspectiveCamera(72, 1, 0.1, 80);
+    wCamera.rotation.order = 'YXZ';
+
+    wRenderer = new THREE.WebGLRenderer({ canvas: worldCanvas, antialias: false, powerPreference: 'high-performance' });
+    wRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+    const amb = new THREE.AmbientLight(0xffffff, 0.72);
+    const sun = new THREE.DirectionalLight(0xfff6e0, 0.65);
+    sun.position.set(18, 32, 14);
+    wScene.add(amb, sun);
+
+    boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    wWorldGroup = new THREE.Group();
+    wEntityGroup = new THREE.Group();
+    wSelfMesh = makeCharMesh(0x55ff55, 'Kamu');
+    wScene.add(wWorldGroup, wEntityGroup, wSelfMesh);
+
+    const resize = () => {
+      if (!worldWrap.clientWidth || !worldWrap.clientHeight) return;
+      wCamera.aspect = worldWrap.clientWidth / worldWrap.clientHeight;
+      wCamera.updateProjectionMatrix();
+      wRenderer.setSize(worldWrap.clientWidth, worldWrap.clientHeight, false);
+    };
+    new ResizeObserver(resize).observe(worldWrap);
+    resize();
+
+    const loop = () => {
+      requestAnimationFrame(loop);
+      if (activeTab !== 'world' || !wRenderer) return;
+      updateCameraTransform();
+      wRenderer.render(wScene, wCamera);
+    };
+    requestAnimationFrame(loop);
+  }
+
+  let lastWorldData = null;
+  function updateCameraTransform() {
+    const off = lastWorldData?.offset || { x: 0.5, y: 0, z: 0.5 };
+    wSelfMesh.position.set(off.x, off.y, off.z);
+    wSelfMesh.rotation.y = localYaw;
+    wSelfMesh.visible = camMode === 'orbit';
+    $('#worldCrosshair').style.display = camMode === 'pov' ? '' : 'none';
+
+    if (camMode === 'pov') {
+      wCamera.position.set(off.x, off.y + 1.62, off.z);
+      wCamera.rotation.y = localYaw;
+      wCamera.rotation.x = localPitch;
+    } else {
+      const tx = off.x, ty = off.y + 1.2, tz = off.z;
+      const cx = tx + Math.sin(orbitYaw) * Math.cos(orbitPitch) * orbitDist;
+      const cy = ty + Math.sin(orbitPitch) * orbitDist;
+      const cz = tz + Math.cos(orbitYaw) * Math.cos(orbitPitch) * orbitDist;
+      wCamera.position.set(cx, cy, cz);
+      wCamera.lookAt(tx, ty, tz);
+    }
+  }
+
+  function updateWorld3D(data) {
+    initWorld3D();
+    if (!wScene) return;
+    if (!data) {
+      worldInfo.textContent = 'Tidak terhubung ke server';
+      return;
+    }
+    const firstLoad = !lastWorldData;
+    lastWorldData = data;
+    if (firstLoad || Date.now() - lastLookSync > 1200) {
+      localYaw = data.yaw || 0;
+      localPitch = data.pitch || 0;
+    }
+
+    // Warna langit siang / malam
+    const t = (data.time ?? 6000) % 24000;
+    const isNight = t > 13000 && t < 23000;
+    const skyHex = isNight ? 0x0b1021 : (t > 12000 || t > 23000) ? 0xd97b43 : 0x78a7ff;
+    wScene.background.setHex(skyHex);
+    wScene.fog.color.setHex(skyHex);
+
+    // Rebuild instanced meshes per tipe blok
+    while (wWorldGroup.children.length) {
+      const ch = wWorldGroup.children.pop();
+      ch.dispose?.();
+    }
+    const byType = new Map();
+    for (const b of data.blocks) {
+      const idx = b[3];
+      if (!byType.has(idx)) byType.set(idx, []);
+      byType.get(idx).push(b);
+    }
+    const dummy = new THREE.Object3D();
+    for (const [idx, arr] of byType) {
+      const [name, hex] = data.palette[idx];
+      const mat = getBlockMaterial(name, hex);
+      const inst = new THREE.InstancedMesh(boxGeo, mat, arr.length);
+      for (let i = 0; i < arr.length; i++) {
+        const [dx, dy, dz] = arr[i];
+        dummy.position.set(dx + 0.5, dy + 0.5, dz + 0.5);
+        dummy.scale.set(1, name.includes('carpet') ? 0.1 : name.includes('slab') ? 0.5 : 1, 1);
+        dummy.updateMatrix();
+        inst.setMatrixAt(i, dummy.matrix);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      wWorldGroup.add(inst);
+    }
+
+    // Entities (pemain & mob sekitar)
+    while (wEntityGroup.children.length) wEntityGroup.children.pop();
+    for (const e of data.entities) {
+      const col = e.type === 'player' ? 0x55ffff : (e.type === 'mob' || e.type === 'hostile') ? 0xff5555 : 0xffff55;
+      const m = makeCharMesh(col, e.name);
+      m.position.set(e.dx, e.dy, e.dz);
+      m.rotation.y = e.yaw || 0;
+      wEntityGroup.add(m);
+    }
+
+    worldInfo.textContent = `${data.blocks.length} blok · ${data.entities.length} objek sekitar`;
+  }
+
+  // Kontrol geser layar 3D (menengok / putar kamera)
+  let dragging3D = false, lastPx = 0, lastPy = 0;
+  worldCanvas.addEventListener('pointerdown', (e) => {
+    dragging3D = true; lastPx = e.clientX; lastPy = e.clientY;
+    worldCanvas.setPointerCapture(e.pointerId);
+  });
+  worldCanvas.addEventListener('pointermove', (e) => {
+    if (!dragging3D) return;
+    const dx = e.clientX - lastPx, dy = e.clientY - lastPy;
+    lastPx = e.clientX; lastPy = e.clientY;
+    if (camMode === 'pov') {
+      const dYaw = -dx * 0.006, dPitch = -dy * 0.006;
+      localYaw += dYaw;
+      localPitch = Math.max(-1.5, Math.min(1.5, localPitch + dPitch));
+      lastLookSync = Date.now();
+      if (current && accounts.get(current)?.status === 'online') {
+        socket.emit('bot:look2d', current, dYaw, dPitch);
+      }
+    } else {
+      orbitYaw -= dx * 0.008;
+      orbitPitch = Math.max(-1.2, Math.min(1.4, orbitPitch + dy * 0.008));
+    }
+  });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) =>
+    worldCanvas.addEventListener(ev, () => { dragging3D = false; })
+  );
+  worldCanvas.addEventListener('wheel', (e) => {
+    if (camMode === 'orbit') {
+      e.preventDefault();
+      orbitDist = Math.max(3, Math.min(28, orbitDist + (e.deltaY > 0 ? 1.2 : -1.2)));
+    }
+  }, { passive: false });
+
+  $('#btnCamPov').onclick = () => { camMode = 'pov'; $('#btnCamPov').classList.add('active'); $('#btnCamOrbit').classList.remove('active'); };
+  $('#btnCamOrbit').onclick = () => { camMode = 'orbit'; $('#btnCamOrbit').classList.add('active'); $('#btnCamPov').classList.remove('active'); };
+  $('#btnWorldFs').onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (worldWrap.requestFullscreen) worldWrap.requestFullscreen().catch(() => worldWrap.classList.toggle('fs'));
+    else worldWrap.classList.toggle('fs');
+  };
+  $('#btnActSwing').onclick = () => current && socket.emit('bot:action', current, 'swing');
+  $('#btnActUse').onclick = () => current && socket.emit('bot:action', current, 'use');
+
+  let worldBusy = false;
+  function pollWorld3D() {
+    if (activeTab !== 'world' || worldBusy || !current) return;
+    if (accounts.get(current)?.status !== 'online') return updateWorld3D(null);
+    worldBusy = true;
+    socket.emit('bot:world3d', current, (d) => { worldBusy = false; updateWorld3D(d); });
+  }
+  setInterval(pollWorld3D, 900);
+
   // ------------------------------------------------------------ panel tabs
   $('#panelTabs').onclick = (e) => {
     const t = e.target.closest('.tab'); if (!t) return;
@@ -316,6 +595,7 @@
     $('#players').dataset.sig = ''; $('#invMain').dataset.sig = '';
     if (lastState) renderState(lastState);
     if (activeTab === 'map' && accounts.get(current)?.status !== 'online') drawMap(null);
+    if (activeTab === 'world') pollWorld3D();
   };
 
   // ------------------------------------------------------------ movement
@@ -325,10 +605,10 @@
     if (ctl === 'look-left' || ctl === 'look-right') { if (on) socket.emit('bot:look', current, ctl === 'look-left' ? Math.PI / 8 : -Math.PI / 8); return; }
     if (on === held.has(ctl)) return;
     on ? held.add(ctl) : held.delete(ctl);
-    $$(`.dpad [data-ctl="${ctl}"]`).forEach((b) => b.classList.toggle('on', on));
+    $$(`.dpad [data-ctl="${ctl}"], .mini-move [data-ctl="${ctl}"]`).forEach((b) => b.classList.toggle('on', on));
     socket.emit('bot:control', current, ctl, on);
   }
-  $$('.dpad button').forEach((b) => {
+  $$('.dpad button, .mini-move button').forEach((b) => {
     const ctl = b.dataset.ctl;
     b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); control(ctl, true); });
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach((ev) => b.addEventListener(ev, () => control(ctl, false)));

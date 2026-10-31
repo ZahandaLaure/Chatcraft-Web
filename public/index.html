@@ -61,10 +61,39 @@
         <section class="panel">
           <div class="tabs" id="panelTabs">
             <button class="tab active" data-tab="status">❤ Status</button>
-            <button class="tab" data-tab="players">👥 Pemain</button>
-            <button class="tab" data-tab="inv">🎒 Inventaris</button>
+            <button class="tab" data-tab="world">👁 Dunia 3D</button>
             <button class="tab" data-tab="map">🗺 Peta</button>
+            <button class="tab" data-tab="players">👥 Pemain</button>
+            <button class="tab" data-tab="inv">🎒 Tas</button>
             <button class="tab" data-tab="move">🎮 Gerak</button>
+          </div>
+
+          <div class="pane" data-pane="world">
+            <div class="world-wrap" id="worldWrap">
+              <div class="world-hud-top">
+                <div class="world-modes">
+                  <button type="button" class="w-btn active" id="btnCamPov" title="Lihat dari mata karakter">👁 Mata Bot</button>
+                  <button type="button" class="w-btn" id="btnCamOrbit" title="Kamera bebas mengelilingi karakter">🎥 Orbit 3D</button>
+                </div>
+                <span class="world-info" id="worldInfo">Geser layar untuk menengok</span>
+                <button type="button" class="w-btn" id="btnWorldFs" title="Layar penuh">⛶</button>
+              </div>
+              <canvas id="worldCanvas"></canvas>
+              <div class="crosshair" id="worldCrosshair">+</div>
+              <div class="world-hud-bot">
+                <div class="mini-move">
+                  <button type="button" data-ctl="left">◀</button>
+                  <button type="button" data-ctl="forward">▲</button>
+                  <button type="button" data-ctl="back">▼</button>
+                  <button type="button" data-ctl="right">▶</button>
+                  <button type="button" data-ctl="jump">⤒</button>
+                </div>
+                <div class="mini-act">
+                  <button type="button" class="w-act" id="btnActSwing" title="Klik Kiri / Pukul">⚔ Pukul</button>
+                  <button type="button" class="w-act" id="btnActUse" title="Klik Kanan / Interaksi">🖐 Gunakan</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="pane active" data-pane="status">
@@ -202,6 +231,7 @@
 
   <div class="toasts" id="toasts"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="app.js"></script>
 </body>
